@@ -1,0 +1,78 @@
+SELECT
+OBJECT_SCHEMA_NAME(sd.referencing_id) AS ReferencingSchema,
+OBJECT_NAME(sd.referencing_id) AS ReferencingObject,
+sd.referenced_schema_name AS ReferencedSchema,
+sd.referenced_entity_name AS ReferencedObject,
+sd.referenced_database_name AS ReferencedDatabase,
+sd.referenced_class_desc AS ReferencedClass
+FROM sys.sql_expression_dependencies sd
+ORDER BY ReferencingObject;
+
+
+DECLARE @dbName NVARCHAR(255);
+DECLARE @sql NVARCHAR(MAX);
+
+-- Temporary table to store all dependencies from all databases
+IF OBJECT_ID('tempdb..#AllDependencies') IS NOT NULL DROP TABLE #AllDependencies;
+
+CREATE TABLE #AllDependencies (
+DatabaseName NVARCHAR(255),
+ReferencingObject NVARCHAR(255),
+ReferencedSchema NVARCHAR(255),
+ReferencedObject NVARCHAR(255),
+ReferencedDatabase NVARCHAR(255),
+ReferencedClass NVARCHAR(255)
+);
+
+DECLARE db_cursor CURSOR FOR
+SELECT name
+FROM sys.databases
+WHERE state_desc = 'ONLINE'
+AND name NOT IN ('master','tempdb','model','msdb'); -- skip system DBs
+
+OPEN db_cursor;
+FETCH NEXT FROM db_cursor INTO @dbName;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+SET @sql = '
+USE [' + @dbName + '];
+
+INSERT INTO #AllDependencies (DatabaseName, ReferencingObject, ReferencedSchema, ReferencedObject, ReferencedDatabase, ReferencedClass)
+SELECT
+''' + @dbName + ''' AS DatabaseName,
+OBJECT_NAME(referencing_id) AS ReferencingObject,
+referenced_schema_name,
+referenced_entity_name,
+referenced_database_name,
+referenced_class_desc
+FROM sys.sql_expression_dependencies
+WHERE referenced_entity_name IS NOT NULL;
+';
+
+EXEC sp_executesql @sql;
+
+FETCH NEXT FROM db_cursor INTO @dbName;
+END
+
+CLOSE db_cursor;
+DEALLOCATE db_cursor;
+
+-- View the collected dependencies
+SELECT * FROM #AllDependencies
+ORDER BY DatabaseName, ReferencingObject;
+--------------------------------------------------------
+SELECT
+    OBJECT_NAME(referencing_id) AS referencing_object_name,
+    OBJECT_SCHEMA_NAME(referencing_id) AS referencing_schema_name,
+    referenced_entity_name,
+    referenced_schema_name,
+    referenced_database_name,
+    referenced_server_name,
+    is_caller_dependent
+FROM
+    sys.sql_expression_dependencies
+WHERE
+    referenced_entity_name = 'YourTableName' -- Replace with your table name
+    AND referenced_schema_name = 'dbo' -- Replace with the schema name if different
+    AND referenced_database_name = DB_NAME(); -- Current database
